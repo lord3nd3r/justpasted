@@ -197,6 +197,20 @@
       flex-wrap:wrap;
     }
 
+    /* Mode buttons: inactive vs active */
+    .mode-toggle-row .btn {
+      background:var(--bg-soft);
+      border:1px solid var(--border);
+      color:var(--text-muted);
+      box-shadow:none;
+    }
+    .mode-toggle-row .btn.active {
+      background:var(--accent);
+      color:#ffffff;
+      border-color:var(--accent);
+      box-shadow:0 8px 25px rgba(56,189,248,0.3);
+    }
+
     .expiry-row {
       display:flex;
       justify-content:center;
@@ -432,7 +446,7 @@
         <!-- MAIN SHARE UI (hidden until logged in) -->
         <div id="mainContent" style="display:none">
           <div class="mode-toggle-row">
-            <button id="modeFilesBtn" class="btn" style="background:var(--accent)">Files</button>
+            <button id="modeFilesBtn" class="btn active">Files</button>
             <button id="modePasteBtn" class="btn btn-outline">Paste</button>
           </div>
 
@@ -484,39 +498,67 @@
       return fixed + ' ' + units[i];
     }
 
-    // THEME INIT (dark, light, terminal)
-    const storedTheme = localStorage.getItem('theme');
-    const allowedThemes = ['dark', 'light', 'terminal'];
-
-    if (allowedThemes.includes(storedTheme)) {
-      document.documentElement.dataset.theme = storedTheme;
-    } else {
-      document.documentElement.dataset.theme =
-        window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
-          ? 'light'
-          : 'dark';
+    // Small HTML escape helper for dashboard
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
     }
 
+    // THEME INIT (dark, light, terminal)
     const themeOrder = ['dark', 'light', 'terminal'];
+    let themeTogglesInitialized = false;
+
+    (function initThemeFromStorageOrSystem() {
+      try {
+        const storedTheme = localStorage.getItem('theme');
+        const allowedThemes = ['dark', 'light', 'terminal'];
+        if (allowedThemes.includes(storedTheme)) {
+          document.documentElement.dataset.theme = storedTheme;
+        } else {
+          document.documentElement.dataset.theme =
+            window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
+              ? 'light'
+              : 'dark';
+        }
+      } catch (_) {
+        document.documentElement.dataset.theme = 'dark';
+      }
+    })();
 
     function updateThemeButtons() {
-      const t = document.documentElement.dataset.theme;
+      const root = document.documentElement;
+      const current = root.dataset.theme || 'dark';
+      const idx = themeOrder.indexOf(current);
+      const next = themeOrder[(idx + 1) % themeOrder.length];
+
       let iconText, labelText;
-      if (t === 'light') {
-        iconText = 'Moon';
-        labelText = 'Dark';
-      } else if (t === 'terminal') {
-        iconText = '⌨︎';
-        labelText = 'Terminal';
-      } else {
+      if (next === 'light') {
         iconText = 'Sun';
         labelText = 'Light';
+      } else if (next === 'dark') {
+        iconText = 'Moon';
+        labelText = 'Dark';
+      } else { // terminal
+        iconText = '⌨︎';
+        labelText = 'Terminal';
       }
+
       document.querySelectorAll('.theme-icon').forEach(el => el.textContent = iconText);
       document.querySelectorAll('.theme-label').forEach(el => el.textContent = labelText);
     }
 
     function setupThemeToggles() {
+      if (themeTogglesInitialized) {
+        updateThemeButtons();
+        return;
+      }
+      themeTogglesInitialized = true;
+
       document.querySelectorAll('[data-theme-toggle]').forEach(btn => {
         btn.addEventListener('click', () => {
           const root = document.documentElement;
@@ -524,7 +566,9 @@
           const idx = themeOrder.indexOf(current);
           const next = themeOrder[(idx + 1) % themeOrder.length];
           root.dataset.theme = next;
-          localStorage.setItem('theme', next);
+          try {
+            localStorage.setItem('theme', next);
+          } catch (_) {}
           updateThemeButtons();
         });
       });
@@ -606,21 +650,29 @@
               </thead>
               <tbody>
                 ${list.map(s => {
-                  const href = `/${s.type === 'paste' ? 'p' : 'f'}/${s.id}`;
+                  const type = s.type === 'paste' ? 'paste' : 'file';
+                  const href = `/${type === 'paste' ? 'p' : 'f'}/${encodeURIComponent(s.id)}`;
                   const views = typeof s.views === 'number' ? s.views : 0;
-                  const sizeLabel = s.type === 'file' ? formatBytes(s.size || 0) : '—';
+                  const sizeLabel = type === 'file' ? formatBytes(s.size || 0) : '—';
+                  let expiresLabel = '<span class="never">Never</span>';
+                  if (s.expires) {
+                    const ex = new Date(s.expires);
+                    if (!isNaN(ex)) {
+                      expiresLabel = escapeHtml(ex.toLocaleString());
+                    }
+                  }
                   return `
-                    <tr data-id="${s.id}" data-type="${s.type}">
+                    <tr data-id="${escapeHtml(s.id)}" data-type="${type}">
                       <td>
                         <a href="${href}" target="_blank" rel="noopener">
-                          ${s.title}
+                          ${escapeHtml(s.title)}
                         </a>
                       </td>
-                      <td>${s.type}</td>
+                      <td>${escapeHtml(type)}</td>
                       <td>${views}</td>
                       <td>${sizeLabel}</td>
-                      <td>${new Date(s.created).toLocaleString()}</td>
-                      <td><span class="never">Never</span></td>
+                      <td>${escapeHtml(new Date(s.created).toLocaleString())}</td>
+                      <td>${expiresLabel}</td>
                       <td>
                         <button class="btn btn-sm btn-outline dash-copy">Copy link</button>
                         <button class="btn btn-sm btn-danger dash-delete">Delete</button>
@@ -745,6 +797,12 @@
         const email = document.getElementById('authEmail').value.trim();
         const password = document.getElementById('authPassword').value;
 
+        if (!email || !password) {
+          authStatusEl.textContent = 'Email and password are required.';
+          authStatusEl.className = 'auth-status error';
+          return;
+        }
+
         authStatusEl.textContent = 'Logging in…';
         authStatusEl.className = 'auth-status';
 
@@ -773,6 +831,17 @@
       document.getElementById('registerBtn').onclick = () => {
         const email = document.getElementById('authEmail').value.trim();
         const password = document.getElementById('authPassword').value;
+
+        if (!email || !password) {
+          authStatusEl.textContent = 'Email and password are required.';
+          authStatusEl.className = 'auth-status error';
+          return;
+        }
+        if (password.length < 6) {
+          authStatusEl.textContent = 'Password must be at least 6 characters.';
+          authStatusEl.className = 'auth-status error';
+          return;
+        }
 
         authStatusEl.textContent = 'Creating account…';
         authStatusEl.className = 'auth-status';
@@ -811,20 +880,37 @@
 
       // MODE
       const setMode = m => {
-        document.getElementById('modeFilesBtn').style.background =
-          m === 'files' ? 'var(--accent)' : 'var(--bg-soft)';
-        document.getElementById('modePasteBtn').style.background =
-          m === 'paste' ? 'var(--accent)' : 'var(--bg-soft)';
+        const filesBtn = document.getElementById('modeFilesBtn');
+        const pasteBtn = document.getElementById('modePasteBtn');
+        if (!filesBtn || !pasteBtn) return;
+
+        filesBtn.classList.toggle('active', m === 'files');
+        pasteBtn.classList.toggle('active', m === 'paste');
+
         document.getElementById('fileDropzone').style.display =
           m === 'files' ? 'block' : 'none';
         document.getElementById('pasteContainer').style.display =
           m === 'paste' ? 'block' : 'none';
+
+        try {
+          localStorage.setItem('mode', m);
+        } catch (_) {}
       };
 
       document.getElementById('modeFilesBtn').onclick = () => setMode('files');
       document.getElementById('modePasteBtn').onclick = () => setMode('paste');
 
-      // EXPIRY (UI only for now, value sent with uploads)
+      // Initialize mode from storage
+      let initialMode = 'files';
+      try {
+        const storedMode = localStorage.getItem('mode');
+        if (storedMode === 'paste' || storedMode === 'files') {
+          initialMode = storedMode;
+        }
+      } catch (_) {}
+      setMode(initialMode);
+
+      // EXPIRY
       document.querySelectorAll('.expiry-btn').forEach(b => {
         b.onclick = () => {
           document.querySelectorAll('.expiry-btn').forEach(x => x.classList.remove('active'));
@@ -850,38 +936,50 @@
       function handleFiles(files) {
         if (!files || !files.length) return;
 
-        const fd = new FormData();
-        fd.append('file', files[0]);
-
         const expiry = getExpiry();
-        if (expiry) fd.append('expiry', expiry); // ready for future backend logic
-
         statusEl.textContent = 'Uploading…';
 
-        fetch('/upload', {
-          method: 'POST',
-          body: fd
-        })
-          .then(r => {
-            if (r.status === 401) {
-              statusEl.textContent = 'You must be logged in to upload.';
-              return null;
-            }
-            return r.json();
+        const uploads = Array.from(files).map(file => {
+          const fd = new FormData();
+          fd.append('file', file);
+          if (expiry) fd.append('expiry', expiry); // ready for backend logic
+
+          return fetch('/upload', {
+            method: 'POST',
+            body: fd
           })
-          .then(data => {
-            if (!data) return;
-            if (data.error) {
-              statusEl.textContent = 'Error: ' + data.error;
-              return;
-            }
-            const url = data.url;
-            statusEl.innerHTML =
-              `Uploaded!<br><a href="${url}" target="_blank" rel="noopener" style="font-size:1.4rem;font-weight:600">${url}</a>`;
-          })
-          .catch(() => {
+            .then(r => {
+              if (r.status === 401) {
+                return { _unauth: true };
+              }
+              return r.json();
+            })
+            .catch(() => ({ _error: true }));
+        });
+
+        Promise.all(uploads).then(results => {
+          if (results.some(r => r && r._unauth)) {
+            statusEl.textContent = 'You must be logged in to upload.';
+            return;
+          }
+
+          const success = results.filter(r => r && !r._unauth && !r._error && !r.error && r.url);
+          if (!success.length) {
             statusEl.textContent = 'Upload failed.';
-          });
+            return;
+          }
+
+          const linksHtml = success
+            .map((r, idx) => {
+              const url = r.url;
+              return `<div>${success.length > 1 ? (idx + 1) + '. ' : ''}<a href="${url}" target="_blank" rel="noopener" style="font-size:1.1rem;font-weight:600">${url}</a></div>`;
+            })
+            .join('');
+
+          const countLabel = success.length > 1 ? `${success.length} files` : '1 file';
+          statusEl.innerHTML =
+            `Uploaded ${countLabel}!<br>${linksHtml}`;
+        });
       }
 
       // Drag & drop
@@ -915,7 +1013,14 @@
 
         statusEl.textContent = 'Saving…';
 
-        fetch('/paste', {
+        const expiry = getExpiry();
+        let url = '/paste';
+        if (expiry) {
+          const params = new URLSearchParams({ expiry });
+          url += '?' + params.toString();
+        }
+
+        fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain' },
           body: text
@@ -933,9 +1038,19 @@
               statusEl.textContent = 'Error: ' + data.error;
               return;
             }
-            const url = data.url;
+            const pasteUrl = data.url;
+            let expiryLabel = '';
+            if (expiry) {
+              const map = {
+                '1h': ' (expires in 1 hour)',
+                '1d': ' (expires in 1 day)',
+                '7d': ' (expires in 7 days)',
+                '30d': ' (expires in 30 days)'
+              };
+              expiryLabel = map[expiry] || '';
+            }
             statusEl.innerHTML =
-              `Paste ready!<br><a href="${url}" target="_blank" rel="noopener" style="font-size:1.4rem;font-weight:600">${url}</a>`;
+              `Paste ready${expiryLabel}!<br><a href="${pasteUrl}" target="_blank" rel="noopener" style="font-size:1.4rem;font-weight:600">${pasteUrl}</a>`;
             document.getElementById('pasteInput').value = '';
           })
           .catch(() => {
@@ -948,15 +1063,11 @@
         location.href = '/dashboard';
       };
 
-      // Initial state
-      setMode('files');
-
       // Wire theme toggles on home too
       setupThemeToggles();
     }
 
     // Ensure theme toggles are wired even if initApp/renderDashboard were already called
-    // (they each call setupThemeToggles once, but in case script order changes, this is safe)
     setupThemeToggles();
   </script>
 </body>
