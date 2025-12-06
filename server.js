@@ -1,5 +1,5 @@
 // ==============================
-//  Pastebin – Full Server Code
+//  Pastebin – Full Server Code (with expiry support)
 // ==============================
 
 const express = require('express');
@@ -55,7 +55,8 @@ db.serialize(() => {
       mime TEXT,
       created INTEGER,
       user_id INTEGER,
-      views INTEGER DEFAULT 0
+      views INTEGER DEFAULT 0,
+      expires INTEGER
   )`);
 
   db.run(`CREATE TABLE IF NOT EXISTS pastes (
@@ -64,10 +65,11 @@ db.serialize(() => {
       title TEXT,
       created INTEGER,
       user_id INTEGER,
-      views INTEGER DEFAULT 0
+      views INTEGER DEFAULT 0,
+      expires INTEGER
   )`);
 
-  // Patch older DBs that don't have views columns yet
+  // Patch older DBs that don't have views/expiry columns yet
   db.run(`ALTER TABLE files ADD COLUMN views INTEGER DEFAULT 0`, err => {
     if (err && !/duplicate column/i.test(err.message || '')) {
       console.error('Error adding files.views column:', err);
@@ -76,6 +78,17 @@ db.serialize(() => {
   db.run(`ALTER TABLE pastes ADD COLUMN views INTEGER DEFAULT 0`, err => {
     if (err && !/duplicate column/i.test(err.message || '')) {
       console.error('Error adding pastes.views column:', err);
+    }
+  });
+
+  db.run(`ALTER TABLE files ADD COLUMN expires INTEGER`, err => {
+    if (err && !/duplicate column/i.test(err.message || '')) {
+      console.error('Error adding files.expires column:', err);
+    }
+  });
+  db.run(`ALTER TABLE pastes ADD COLUMN expires INTEGER`, err => {
+    if (err && !/duplicate column/i.test(err.message || '')) {
+      console.error('Error adding pastes.expires column:', err);
     }
   });
 });
@@ -100,7 +113,32 @@ app.use(express.json());
 app.use(express.static(PUBLIC_DIR));
 app.use('/uploads', express.static(UPLOAD_DIR));
 
-// Load logged-in user via session cookie
+// ---------------------------------------------------------------------------
+// EXPIRY HELPER
+// ---------------------------------------------------------------------------
+
+function computeExpiry(expiresCode) {
+  if (!expiresCode) return null;
+  const now = Date.now();
+  switch (expiresCode) {
+    case '1h':
+      return now + 1 * 60 * 60 * 1000;
+    case '1d':
+      return now + 24 * 60 * 60 * 1000;
+    case '7d':
+      return now + 7 * 24 * 60 * 60 * 1000;
+    case '30d':
+      return now + 30 * 24 * 60 * 60 * 1000;
+    default:
+      return null; // treat unknown as "never"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SESSION / AUTH MIDDLEWARE
+// ---------------------------------------------------------------------------
+
+// Load logged-in user via session cookie (respect session expiry)
 app.use((req, res, next) => {
   const sid = req.cookies.session_id;
   if (!sid) {
@@ -108,18 +146,37 @@ app.use((req, res, next) => {
     return next();
   }
 
+  const now = Date.now();
+
   db.get(
-    `SELECT users.* FROM sessions
+    `SELECT users.*, sessions.expires AS session_expires
+     FROM sessions
      JOIN users ON users.id = sessions.user_id
      WHERE sessions.id = ?`,
     [sid],
-    (err, user) => {
+    (err, row) => {
       if (err) {
         console.error('Session lookup error:', err);
         req.user = null;
         return next();
       }
-      req.user = user || null;
+
+      if (!row) {
+        req.user = null;
+        return next();
+      }
+
+      // If session expired, clear it out and treat as logged out
+      if (row.session_expires && row.session_expires <= now) {
+        db.run('DELETE FROM sessions WHERE id = ?', [sid], err2 => {
+          if (err2) console.error('Session cleanup error:', err2);
+        });
+        req.user = null;
+        return next();
+      }
+
+      delete row.session_expires;
+      req.user = row;
       next();
     }
   );
@@ -137,7 +194,7 @@ function requireAuth(req, res, next) {
 function createSession(userId, res, email) {
   const sid = crypto.randomBytes(30).toString("hex");
   const now = Date.now();
-  const expires = now + 90 * 86400 * 1000;
+  const expires = now + 90 * 86400 * 1000; // 90 days
 
   db.run(
     "INSERT INTO sessions (id, user_id, created, expires) VALUES (?, ?, ?, ?)",
@@ -238,13 +295,15 @@ app.get('/api/me', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// UPLOAD FILE (with quota check)
+// UPLOAD FILE (with quota check + expiry)
 // ---------------------------------------------------------------------------
 
 app.post('/upload', requireAuth, upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file" });
 
   const newFileSize = req.file.size;
+  const expiryCode = req.body && req.body.expiry; // '1h', '1d', '7d', '30d' or undefined
+  const expiresAt = computeExpiry(expiryCode);
 
   db.get(
     "SELECT IFNULL(SUM(size),0) AS used FROM files WHERE user_id = ?",
@@ -269,8 +328,8 @@ app.post('/upload', requireAuth, upload.single('file'), (req, res) => {
       const id = path.basename(req.file.filename, path.extname(req.file.filename));
 
       db.run(
-        `INSERT INTO files (id, filename, original_name, size, mime, created, user_id, views)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+        `INSERT INTO files (id, filename, original_name, size, mime, created, user_id, views, expires)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
         [
           id,
           req.file.filename,
@@ -278,7 +337,8 @@ app.post('/upload', requireAuth, upload.single('file'), (req, res) => {
           req.file.size,
           req.file.mimetype,
           Date.now(),
-          req.user.id
+          req.user.id,
+          expiresAt
         ],
         err2 => {
           if (err2) {
@@ -294,7 +354,7 @@ app.post('/upload', requireAuth, upload.single('file'), (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// CREATE PASTE (clean title, not based on content)
+// CREATE PASTE (clean title, not based on content) + expiry
 // ---------------------------------------------------------------------------
 
 app.post(
@@ -315,10 +375,13 @@ app.post(
 
     const title = `Paste ${ts}`;
 
+    const expiryCode = req.query && req.query.expiry; // from frontend query param
+    const expiresAt = computeExpiry(expiryCode);
+
     db.run(
-      `INSERT INTO pastes (id, content, title, created, user_id, views)
-       VALUES (?, ?, ?, ?, ?, 0)`,
-      [id, content, title, createdAt, req.user.id],
+      `INSERT INTO pastes (id, content, title, created, user_id, views, expires)
+       VALUES (?, ?, ?, ?, ?, 0, ?)`,
+      [id, content, title, createdAt, req.user.id, expiresAt],
       err => {
         if (err) {
           console.error('Paste DB error:', err);
@@ -331,53 +394,64 @@ app.post(
 );
 
 // ---------------------------------------------------------------------------
-// VIEW FILE (increments views)
+// VIEW FILE (increments views, respects expiry)
 // ---------------------------------------------------------------------------
 
 app.get('/f/:id', (req, res) => {
   const id = req.params.id;
-  db.get("SELECT * FROM files WHERE id = ?", [id], (err, file) => {
-    if (err) {
-      console.error('File query error:', err);
-      return res.status(500).send("Server error");
+  const now = Date.now();
+
+  db.get(
+    "SELECT * FROM files WHERE id = ? AND (expires IS NULL OR expires > ?)",
+    [id, now],
+    (err, file) => {
+      if (err) {
+        console.error('File query error:', err);
+        return res.status(500).send("Server error");
+      }
+      if (!file) return res.status(404).send("Not found");
+
+      // Increment views (fire-and-forget)
+      db.run("UPDATE files SET views = views + 1 WHERE id = ?", [id], err2 => {
+        if (err2) console.error('Update views error (file):', err2);
+      });
+
+      const fp = path.join(UPLOAD_DIR, file.filename);
+      const ext = path.extname(fp).toLowerCase();
+      const imgs = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif'];
+
+      if (imgs.includes(ext)) res.sendFile(fp);
+      else res.download(fp, file.original_name);
     }
-    if (!file) return res.status(404).send("Not found");
-
-    // Increment views (fire-and-forget)
-    db.run("UPDATE files SET views = views + 1 WHERE id = ?", [id], err2 => {
-      if (err2) console.error('Update views error (file):', err2);
-    });
-
-    const fp = path.join(UPLOAD_DIR, file.filename);
-    const ext = path.extname(fp).toLowerCase();
-    const imgs = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif'];
-
-    if (imgs.includes(ext)) res.sendFile(fp);
-    else res.download(fp, file.original_name);
-  });
+  );
 });
 
 // ---------------------------------------------------------------------------
-// VIEW PASTE (with Highlight.js & views increment)
+// VIEW PASTE (with Highlight.js & views increment, respects expiry)
 // ---------------------------------------------------------------------------
 
 app.get('/p/:id', (req, res) => {
   const id = req.params.id;
-  db.get("SELECT * FROM pastes WHERE id = ?", [id], (err, paste) => {
-    if (err) {
-      console.error('Paste query error:', err);
-      return res.status(500).send("Server error");
-    }
-    if (!paste) return res.status(404).send("Not found");
+  const now = Date.now();
 
-    // Increment views
-    db.run("UPDATE pastes SET views = views + 1 WHERE id = ?", [id], err2 => {
-      if (err2) console.error('Update views error (paste):', err2);
-    });
+  db.get(
+    "SELECT * FROM pastes WHERE id = ? AND (expires IS NULL OR expires > ?)",
+    [id, now],
+    (err, paste) => {
+      if (err) {
+        console.error('Paste query error:', err);
+        return res.status(500).send("Server error");
+      }
+      if (!paste) return res.status(404).send("Not found");
 
-    const title = e(paste.title);
+      // Increment views
+      db.run("UPDATE pastes SET views = views + 1 WHERE id = ?", [id], err2 => {
+        if (err2) console.error('Update views error (paste):', err2);
+      });
 
-    res.send(`<!DOCTYPE html>
+      const title = e(paste.title);
+
+      res.send(`<!DOCTYPE html>
 <html data-theme="dark">
 <head>
   <meta charset="utf-8">
@@ -405,19 +479,21 @@ app.get('/p/:id', (req, res) => {
   <script>hljs.highlightAll();</script>
 </body>
 </html>`);
-  });
+    }
+  );
 });
 
 // ---------------------------------------------------------------------------
-// USER DASHBOARD LISTING (includes views & size)
+// USER DASHBOARD LISTING (includes views, size, expires; hides expired)
 // ---------------------------------------------------------------------------
 
 app.get('/api/shares', requireAuth, (req, res) => {
   const all = [];
+  const now = Date.now();
 
   db.all(
-    "SELECT id, original_name AS title, 'file' AS type, created, size, views FROM files WHERE user_id = ?",
-    [req.user.id],
+    "SELECT id, original_name AS title, 'file' AS type, created, size, views, expires FROM files WHERE user_id = ? AND (expires IS NULL OR expires > ?)",
+    [req.user.id, now],
     (err, files) => {
       if (err) {
         console.error('Files list error:', err);
@@ -426,8 +502,8 @@ app.get('/api/shares', requireAuth, (req, res) => {
       if (files) all.push(...files);
 
       db.all(
-        "SELECT id, title, 'paste' AS type, created, NULL AS size, views FROM pastes WHERE user_id = ?",
-        [req.user.id],
+        "SELECT id, title, 'paste' AS type, created, NULL AS size, views, expires FROM pastes WHERE user_id = ? AND (expires IS NULL OR expires > ?)",
+        [req.user.id, now],
         (err2, pastes) => {
           if (err2) {
             console.error('Pastes list error:', err2);
