@@ -1,48 +1,108 @@
 # paste.3nd3r.net
-**A beautiful, private, forever Pastebin clone**
 
-[![Live Demo](https://img.shields.io/badge/live-paste.3nd3r.net-38bdf8?style=for-the-badge&logo=cloudflare)](https://paste.3nd3r.net)
-![Node.js](https://img.shields.io/badge/Node.js-%3E=18-339933?style=flat-square&logo=node.js)
-![License](https://img.shields.io/github/license/lord3nd3r/paste.3nd3r.net?style=flat-square)
-![Stars](https://img.shields.io/github/stars/lord3nd3r/paste.3nd3r.net?style=social)
+A small, self-hosted paste & file sharing application (Node.js + Express + SQLite).
 
-https://paste.3nd3r.net
+[Live Demo](https://paste.3nd3r.net) — self-host it and control your data.
 
 ## Features
 - Instant file & text sharing
-- 1 GB storage quota per account
-- Full user accounts (email + password)
-- Private dashboard with delete & copy links
-- View counters
-- Dark / Light mode (remembers preference)
-- Drag-and-drop anywhere on the page
-- Highlight.js syntax highlighting for pastes
-- Zero tracking, zero ads, zero JavaScript frameworks
-- Works perfectly on mobile
-- Fully self-hostable in **two files** (`server.js` + `index.html`)
+- Per-user storage quota (default 1 GB)
+- User accounts (email + password)
+- Admin UI at `/admin/` (stats, users, blocked IPs, SMTP tests)
+- Optional email verification and encrypted stored settings
+- Lightweight presence (online user count) via heartbeat
 
-## Live Demo
-https://paste.3nd3r.net
+---
 
-## Quick Start (5 minutes)
+## Quick Start
 
-### 1. Prerequisites
-- Node.js 18 or higher
-- A domain name with DNS A record pointing to your server
-- (Optional but recommended) Certbot / Let’s Encrypt for HTTPS
+1. Prerequisites
 
-### 2. Clone & Install
+	- Node.js 18+ installed
+	- A domain (optional for HTTPS)
+
+2. Clone & install
+
 ```bash
 git clone https://github.com/lord3nd3r/paste.3nd3r.net.git
 cd paste.3nd3r.net
 npm install
+```
 
-npm start
+3. Run (development)
+
+```bash
+# run on an unprivileged port (recommended for dev)
+HTTP_PORT=3000 node server.js
+```
+
+Open http://localhost:3000/ and http://localhost:3000/admin/
+
+---
+
+## Configuration
+
+The project uses `config.js` with sensible defaults and supports environment variables:
+
+- `HTTP_PORT` (default 80)
+- `HTTPS_PORT` (default 443)
+- `UPLOAD_DIR` (default `uploads`)
+- `QUOTA_BYTES` (default 1 GiB)
+- `OWNER_EMAIL` (owner address for test mails)
+- `EMAIL_VERIFICATION_ENABLED` (set `1` to require email verification)
+- `MAIL_HOST`, `MAIL_PORT`, `MAIL_USER`, `MAIL_PASS`, `MAIL_FROM` (SMTP settings)
+- `SETTINGS_KEY` (optional AES-GCM key — used to encrypt `MAIL.AUTH_PASS` in DB)
+
+If using Let's Encrypt, provide certs under `/etc/letsencrypt/live/<domain>/`.
+
+---
+
+## Database & migrations
+
+- SQLite database `pastebin.db` lives in the repo root.
+- On first run the server creates tables. Migrations are run via `ALTER TABLE` statements (safe to re-run).
+- Admin settings live in the `settings` table and may be encrypted when `SETTINGS_KEY` is set.
+
+Wipe local DB (dev only):
+
+```bash
+rm -f pastebin.db && rm -rf uploads
+```
+
+---
 
 ## Admin UI
 
-- A standalone admin interface is available at `/admin` (requires an admin account).
-- Use the admin UI to view stats, manage users, blocked IPs, and update mail/server settings.
-- Admin settings are persisted to the SQLite `settings` table and (optionally) encrypted when `SETTINGS_KEY` is provided.
+- Visit `/admin/` when logged in as an admin.
+- Features: global config, SMTP probe, blocked IP management, user search, per-user shares, role/ban actions, and stats.
 
-Note: the in-page admin panel was moved to the separate `/admin` path to simplify the main UI.
+---
+
+## Presence / Online Count
+
+Clients call `/api/ping` periodically (30s) to update their session `last_seen`. The admin `stats` endpoint reports `onlineCount` (sessions with `last_seen` within the last 5 minutes).
+
+To limit DB writes, the server only updates `last_seen` when it is older than 30 seconds.
+
+---
+
+## Running tests
+
+Basic Jest integration tests are included. Run:
+
+```bash
+npm test
+```
+
+Tests may create and remove `pastebin.db` — run them in an isolated environment.
+
+---
+
+## Deployment notes
+
+- Use a process manager (systemd, PM2) for production.
+- Do not run Node as root; use a reverse proxy (nginx) for TLS and privileged ports.
+- Set `SETTINGS_KEY` in production to encrypt secrets stored in the DB.
+
+---
+

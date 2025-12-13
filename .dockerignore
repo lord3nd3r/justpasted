@@ -1,0 +1,7 @@
+node_modules
+pastebin.db
+uploads
+.git
+.gitignore
+server.pid
+*.log
