@@ -36,43 +36,22 @@ module.exports = function registerAdminRoutes(app, deps) {
       if (typeof m.FROM === 'string') CONFIG.MAIL.FROM = m.FROM;
     }
 
-    // If MAIL settings were provided, probe SMTP first unless forced
-    (async () => {
-      try {
-        if (body.MAIL && !body.force) {
-          const nodemailer = require('nodemailer');
-          const mail = {
-            HOST: CONFIG.MAIL.HOST,
-            PORT: CONFIG.MAIL.PORT,
-            SECURE: CONFIG.MAIL.SECURE,
-            AUTH_USER: CONFIG.MAIL.AUTH_USER,
-            AUTH_PASS: CONFIG.MAIL.AUTH_PASS,
-            FROM: CONFIG.MAIL.FROM
-          };
-          // merge provided fields
-          Object.assign(mail, body.MAIL);
-          const transporter = nodemailer.createTransport({
-            host: mail.HOST,
-            port: mail.PORT,
-            secure: !!mail.SECURE,
-            auth: mail.AUTH_USER ? { user: mail.AUTH_USER, pass: mail.AUTH_PASS } : undefined
-          });
-          await transporter.verify();
-        }
-
-        // persist
-        setSetting('EMAIL_VERIFICATION_ENABLED', CONFIG.EMAIL_VERIFICATION_ENABLED ? '1' : '0');
-        setSetting('ENABLE_ADMIN_REGISTRATION', CONFIG.ENABLE_ADMIN_REGISTRATION ? '1' : '0');
-        setSetting('QUOTA_BYTES', String(CONFIG.QUOTA_BYTES));
-        setSetting('SITE_URL', CONFIG.SITE_URL);
+    // Persist non-mail settings immediately. MAIL settings are optional and
+    // should be managed on the separate SMTP admin page. Only persist MAIL
+    // when it's explicitly provided in the request body.
+    try {
+      setSetting('EMAIL_VERIFICATION_ENABLED', CONFIG.EMAIL_VERIFICATION_ENABLED ? '1' : '0');
+      setSetting('ENABLE_ADMIN_REGISTRATION', CONFIG.ENABLE_ADMIN_REGISTRATION ? '1' : '0');
+      setSetting('QUOTA_BYTES', String(CONFIG.QUOTA_BYTES));
+      setSetting('SITE_URL', CONFIG.SITE_URL);
+      if (body.MAIL && typeof body.MAIL === 'object') {
         setSetting('MAIL', JSON.stringify(CONFIG.MAIL));
-
-        res.json({ ok: true });
-      } catch (e) {
-        console.error('SMTP probe failed:', e && e.message ? e.message : e);
-        res.status(400).json({ ok: false, error: e && e.message ? e.message : 'smtp_probe_failed' });
       }
-    })();
+      res.json({ ok: true });
+    } catch (e) {
+      console.error('Error saving settings:', e && e.message ? e.message : e);
+      res.status(500).json({ ok: false, error: 'save_failed' });
+    }
   });
 
   app.post('/api/admin/test-smtp', requireAdmin, async (req, res) => {

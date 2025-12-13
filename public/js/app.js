@@ -109,6 +109,17 @@ function setupThemeToggles() {
 
 setupThemeToggles();
 
+// Fetch lightweight site config and apply SITE_NAME to visible branding
+fetch('/api/config').then(r=>r.json()).then(cfg=>{
+  try{
+    const name = cfg && cfg.SITE_NAME ? cfg.SITE_NAME : 'JustPasted';
+    // update any brand containers (second child usually contains the text)
+    document.querySelectorAll('.brand').forEach(b=>{ if(b.children && b.children.length>1) b.children[1].textContent = name; });
+    // update titles that include the brand
+    if(document.title && document.title.indexOf('JustPasted')===-1) document.title = document.title.replace(/Pastebin/g, name);
+  }catch(e){}
+}).catch(()=>{});
+
 // ---------- Routing ----------
 
 if (location.pathname === '/dashboard') {
@@ -135,7 +146,7 @@ function renderDashboard() {
     <div id="dashStats" style="margin-bottom:1rem;font-size:0.95rem;color:var(--text-muted);"></div>
     <div id="dashTableContainer" style="text-align:center;color:var(--text-muted)">Loading…</div>
   `;
-  document.title = 'My Shares — Pastebin';
+  document.title = 'My Shares — JustPasted';
 
   const statsEl = document.getElementById('dashStats');
   const tableContainer = document.getElementById('dashTableContainer');
@@ -311,7 +322,7 @@ function renderAdmin() {
 
   vtitle.textContent = 'Admin Panel';
   vmeta.innerHTML = '';
-  document.title = 'Admin — Pastebin';
+  document.title = 'Admin — JustPasted';
 
   vcontent.innerHTML = document.getElementById('adminContent') ? '' : '';
 
@@ -361,7 +372,7 @@ function loadBlockedIps() {}
 function initApp() {
   document.getElementById('app').style.display = 'block';
   document.getElementById('view').style.display = 'none';
-  document.title = 'Pastebin';
+  document.title = 'JustPasted';
 
   const authStatusEl = document.getElementById('authStatus');
   const loggedOutView = document.getElementById('loggedOutView');

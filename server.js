@@ -362,6 +362,10 @@ app.get('/api/verify-email', (req, res) => {
     }
     if (!user) return res.status(400).send('Invalid user');
 
+    if (user.email_verified) {
+      return res.send('Email already verified');
+    }
+
     if (!user.email_verification_code || String(user.email_verification_code) !== String(code)) {
       return res.status(400).send('Invalid verification code');
     }
@@ -402,6 +406,11 @@ app.get('/api/me', (req, res) => {
 // ---------------------------------------------------------------------------
 // ADMIN CONFIG API
 // ---------------------------------------------------------------------------
+
+// Public config endpoint (lightweight) for frontend branding
+app.get('/api/config', (req, res) => {
+  res.json({ SITE_NAME: CONFIG.SITE_NAME || 'JustPasted' });
+});
 
 // Register admin routes from separate module
 const registerAdminRoutes = require('./adminRoutes');
@@ -600,7 +609,7 @@ app.get('/f/:id', (req, res) => {
 <html data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <title>${title} - Pastebin</title>
+  <title>${title} - JustPasted</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body { margin:0; font-family:system-ui,-apple-system,sans-serif; background:#020617; color:#e5e7eb; display:flex; flex-direction:column; min-height:100vh; }
@@ -620,7 +629,7 @@ app.get('/f/:id', (req, res) => {
 <body>
   <header>
     <div>
-      <span class="brand"><a href="/">Pastebin</a></span>
+      <span class="brand"><a href="/">JustPasted</a></span>
       <span style="margin-left:0.75rem; font-size:0.9rem; color:#9ca3af;">${title}</span>
     </div>
     <div>
@@ -701,7 +710,7 @@ app.get('/p/:id', (req, res) => {
 <body>
   <header>
     <div>
-      <span class="brand"><a href="/">Pastebin</a></span>
+      <span class="brand"><a href="/">JustPasted</a></span>
     </div>
     <div style="font-size:0.85rem;color:#9ca3af;">Paste ID: ${e(id)}</div>
   </header>
@@ -990,7 +999,7 @@ app.get('/api/admin/users', requireAdmin, (req, res) => {
   const like = `%${q}%`;
 
   db.all(
-    'SELECT id, email, created, role, is_banned FROM users WHERE LOWER(email) LIKE ? OR CAST(id AS TEXT) = ? ORDER BY created DESC LIMIT 100',
+    'SELECT id, email, created, role, is_banned, email_verified FROM users WHERE LOWER(email) LIKE ? OR CAST(id AS TEXT) = ? ORDER BY created DESC LIMIT 100',
     [like, q],
     (err, rows) => {
       if (err) {
@@ -1005,7 +1014,7 @@ app.get('/api/admin/users', requireAdmin, (req, res) => {
 // NEW: list all users (for admin panel "all registered users")
 app.get('/api/admin/users-all', requireAdmin, (req, res) => {
   db.all(
-    'SELECT id, email, created, role, is_banned FROM users ORDER BY created DESC',
+    'SELECT id, email, created, role, is_banned, email_verified FROM users ORDER BY created DESC',
     [],
     (err, rows) => {
       if (err) {
@@ -1051,6 +1060,26 @@ app.post('/api/admin/user/ban', requireAdmin, (req, res) => {
     function (err) {
       if (err) {
         console.error('Admin ban user error:', err);
+        return res.status(500).json({ error: 'DB error' });
+      }
+      if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
+      res.json({ ok: true });
+    }
+  );
+});
+
+app.post('/api/admin/user/verify', requireAdmin, (req, res) => {
+  const { userId, verified } = req.body || {};
+  if (!userId || typeof verified !== 'boolean') {
+    return res.status(400).json({ error: 'Invalid payload' });
+  }
+
+  db.run(
+    'UPDATE users SET email_verified = ? WHERE id = ?',
+    [verified ? 1 : 0, userId],
+    function (err) {
+      if (err) {
+        console.error('Admin verify user error:', err);
         return res.status(500).json({ error: 'DB error' });
       }
       if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
