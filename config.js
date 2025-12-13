@@ -32,7 +32,11 @@ const CONFIG = {
   },
 
   // Site / domain
-  SITE_URL: process.env.SITE_URL || null,
+  // Letsencrypt domain override (useful when certs live under /etc/letsencrypt/live/<domain>)
+  LETSENCRYPT_DOMAIN: process.env.LETSENCRYPT_DOMAIN || null,
+
+  // Public site URL. If not set, will derive from LETSENCRYPT_DOMAIN when available.
+  SITE_URL: process.env.SITE_URL || (process.env.LETSENCRYPT_DOMAIN ? `https://${process.env.LETSENCRYPT_DOMAIN}` : null),
 
   // Letsencrypt paths (optional)
   LETSENCRYPT: {
