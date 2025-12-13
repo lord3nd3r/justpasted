@@ -1,5 +1,5 @@
 # paste.3nd3r.net
-**A beautiful, private, forever Pastebin clone – built in just 2 files.**
+**A beautiful, private, forever Pastebin clone**
 
 [![Live Demo](https://img.shields.io/badge/live-paste.3nd3r.net-38bdf8?style=for-the-badge&logo=cloudflare)](https://paste.3nd3r.net)
 ![Node.js](https://img.shields.io/badge/Node.js-%3E=18-339933?style=flat-square&logo=node.js)
@@ -38,3 +38,11 @@ cd paste.3nd3r.net
 npm install
 
 npm start
+
+## Admin UI
+
+- A standalone admin interface is available at `/admin` (requires an admin account).
+- Use the admin UI to view stats, manage users, blocked IPs, and update mail/server settings.
+- Admin settings are persisted to the SQLite `settings` table and (optionally) encrypted when `SETTINGS_KEY` is provided.
+
+Note: the in-page admin panel was moved to the separate `/admin` path to simplify the main UI.

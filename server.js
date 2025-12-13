@@ -12,124 +12,41 @@ const http = require('http');
 const https = require('https');
 const bcrypt = require('bcryptjs');
 const cookieParser = require('cookie-parser');
-const sharp = require('sharp'); // image processing / strip metadata
+let sharp = null;
+try {
+  sharp = require('sharp'); // image processing / strip metadata
+} catch (e) {
+  console.warn('`sharp` module not available — image processing disabled');
+}
+const nodemailer = require('nodemailer');
 
 const app = express();
 
-const HTTP_PORT = 80;
-const HTTPS_PORT = 443;
+// load config from dedicated module
+const { CONFIG } = require('./config');
 
-const UPLOAD_DIR = path.join(__dirname, 'uploads');
-const PUBLIC_DIR = path.join(__dirname, 'public');
+const HTTP_PORT = CONFIG.HTTP_PORT;
+const HTTPS_PORT = CONFIG.HTTPS_PORT;
+
+const UPLOAD_DIR = CONFIG.UPLOAD_DIR;
+const PUBLIC_DIR = CONFIG.PUBLIC_DIR;
 
 // 1 GB per user
-const QUOTA_BYTES = 1024 * 1024 * 1024;
+const QUOTA_BYTES = CONFIG.QUOTA_BYTES;
 
 // Owner (hard admin)
-const OWNER_EMAIL = 'lord3nd3r@gmail.com';
+const OWNER_EMAIL = CONFIG.OWNER_EMAIL;
+if (!CONFIG.SITE_URL) CONFIG.SITE_URL = `http://localhost:${HTTP_PORT}`;
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// ---------------------------------------------------------------------------
-// DATABASE
-// ---------------------------------------------------------------------------
+// Database helpers are moved to `db.js`
+const { db, initDb, loadAllSettings, setSetting, getSetting } = require('./db');
 
-const db = new sqlite3.Database(path.join(__dirname, 'pastebin.db'));
-
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE,
-      password_hash TEXT,
-      created INTEGER,
-      role TEXT DEFAULT 'user',
-      is_banned INTEGER DEFAULT 0,
-      created_ip TEXT
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      user_id INTEGER,
-      created INTEGER,
-      expires INTEGER
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS files (
-      id TEXT PRIMARY KEY,
-      filename TEXT,
-      original_name TEXT,
-      size INTEGER,
-      mime TEXT,
-      created INTEGER,
-      user_id INTEGER,
-      views INTEGER DEFAULT 0,
-      expires INTEGER
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS pastes (
-      id TEXT PRIMARY KEY,
-      content TEXT,
-      title TEXT,
-      created INTEGER,
-      user_id INTEGER,
-      views INTEGER DEFAULT 0,
-      expires INTEGER
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS blocked_ips (
-      ip TEXT PRIMARY KEY,
-      reason TEXT,
-      created INTEGER
-  )`);
-
-  // Reports table (for file/paste reports)
-  db.run(`CREATE TABLE IF NOT EXISTS reports (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      target_type TEXT,          -- 'file' or 'paste'
-      target_id TEXT,
-      reason TEXT,
-      status TEXT DEFAULT 'open', -- 'open' or 'resolved'
-      created INTEGER,
-      reporter_user_id INTEGER,
-      reporter_ip TEXT
-  )`);
-
-  // Legacy migrations if old DBs exist
-  db.run(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'`, err => {
-    if (err && !/duplicate column/i.test(err.message || '')) {
-      console.error('Error adding users.role column:', err);
-    }
-  });
-  db.run(`ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0`, err => {
-    if (err && !/duplicate column/i.test(err.message || '')) {
-      console.error('Error adding users.is_banned column:', err);
-    }
-  });
-  db.run(`ALTER TABLE users ADD COLUMN created_ip TEXT`, err => {
-    if (err && !/duplicate column/i.test(err.message || '')) {
-      console.error('Error adding users.created_ip column:', err);
-    }
-  });
-  db.run(`ALTER TABLE files ADD COLUMN views INTEGER DEFAULT 0`, err => {
-    if (err && !/duplicate column/i.test(err.message || '')) {
-      console.error('Error adding files.views column:', err);
-    }
-  });
-  db.run(`ALTER TABLE pastes ADD COLUMN views INTEGER DEFAULT 0`, err => {
-    if (err && !/duplicate column/i.test(err.message || '')) {
-      console.error('Error adding pastes.views column:', err);
-    }
-  });
-  db.run(`ALTER TABLE files ADD COLUMN expires INTEGER`, err => {
-    if (err && !/duplicate column/i.test(err.message || '')) {
-      console.error('Error adding files.expires column:', err);
-    }
-  });
-  db.run(`ALTER TABLE pastes ADD COLUMN expires INTEGER`, err => {
-    if (err && !/duplicate column/i.test(err.message || '')) {
-      console.error('Error adding pastes.expires column:', err);
-    }
-  });
+initDb();
+loadAllSettings((err, applied) => {
+  if (err) console.warn('Could not load persisted settings at startup');
+  else console.log('Loaded persisted admin settings', applied || {});
 });
 
 // ---------------------------------------------------------------------------
@@ -204,6 +121,13 @@ function isAdmin(user) {
   if (user.role === 'admin' || user.role === 'mod') return true;
   return false;
 }
+
+// -----------------------
+// Mail helpers (nodemailer)
+// -----------------------
+const { sendVerificationEmail } = require('./mailer');
+// Settings helpers are provided by `db.js` (get/set/loadAllSettings)
+// Settings helpers are provided by `db.js` (get/set/loadAllSettings)
 
 // ---------------------------------------------------------------------------
 // MULTER STORAGE
@@ -282,9 +206,23 @@ app.use((req, res, next) => {
         req.user = null;
         return next();
       }
-
+      // capture and remove session_expires before attaching user
+      const sessionLastSeen = row.session_last_seen || row.last_seen || null;
       delete row.session_expires;
+      delete row.session_last_seen;
+      delete row.last_seen;
       req.user = row;
+      // update last_seen only when older than threshold to reduce writes
+      try {
+        const LAST_SEEN_THRESHOLD = 30 * 1000; // 30 seconds
+        if (!sessionLastSeen || (Date.now() - sessionLastSeen) > LAST_SEEN_THRESHOLD) {
+          db.run('UPDATE sessions SET last_seen = ? WHERE id = ?', [Date.now(), sid], err => {
+            if (err) console.error('Error updating last_seen for session', err);
+          });
+        }
+      } catch (e) {
+        console.error('last_seen update failed', e);
+      }
       next();
     }
   );
@@ -360,7 +298,20 @@ app.post('/api/register', (req, res) => {
           return res.status(500).json({ error: 'DB error' });
         }
 
-        createSession(this.lastID, res, eMail);
+        if (CONFIG.EMAIL_VERIFICATION_ENABLED) {
+          const vcode = crypto.randomBytes(16).toString('hex');
+          const vexpires = Date.now() + 24 * 60 * 60 * 1000; // 24h
+          db.run('UPDATE users SET email_verified = 0, email_verification_code = ?, email_verification_expires = ? WHERE id = ?', [vcode, vexpires, this.lastID], err3 => {
+            if (err3) console.error('Error setting verification code:', err3);
+            sendVerificationEmail(this.lastID, eMail, vcode).then(sent => {
+              res.json({ ok: true, email: eMail, verificationSent: !!sent });
+            }).catch(() => {
+              res.json({ ok: true, email: eMail, verificationSent: false });
+            });
+          });
+        } else {
+          createSession(this.lastID, res, eMail);
+        }
       }
     );
   });
@@ -383,6 +334,10 @@ app.post('/api/login', (req, res) => {
       return res.status(403).json({ error: 'This account has been banned.' });
     }
 
+    if (CONFIG.EMAIL_VERIFICATION_ENABLED && !user.email_verified) {
+      return res.status(403).json({ error: 'Email address not verified. Check your email for a verification link.' });
+    }
+
     bcrypt.compare(p, user.password_hash, (err2, ok) => {
       if (err2) {
         console.error('Compare error:', err2);
@@ -391,6 +346,34 @@ app.post('/api/login', (req, res) => {
       if (!ok) return res.status(400).json({ error: 'Invalid credentials' });
 
       createSession(user.id, res, user.email);
+    });
+  });
+});
+
+app.get('/api/verify-email', (req, res) => {
+  const uid = req.query.uid;
+  const code = req.query.code;
+  if (!uid || !code) return res.status(400).send('Missing params');
+
+  db.get('SELECT * FROM users WHERE id = ?', [uid], (err, user) => {
+    if (err) {
+      console.error('Verify lookup error:', err);
+      return res.status(500).send('DB error');
+    }
+    if (!user) return res.status(400).send('Invalid user');
+
+    if (!user.email_verification_code || String(user.email_verification_code) !== String(code)) {
+      return res.status(400).send('Invalid verification code');
+    }
+
+    if (user.email_verification_expires && user.email_verification_expires <= Date.now()) {
+      return res.status(400).send('Verification code expired');
+    }
+
+    db.run('UPDATE users SET email_verified = 1, email_verification_code = NULL, email_verification_expires = NULL WHERE id = ?', [uid], err2 => {
+      if (err2) console.error('Error marking email verified:', err2);
+      // Create session after verification
+      createSession(uid, res, user.email);
     });
   });
 });
@@ -415,6 +398,14 @@ app.get('/api/me', (req, res) => {
     role: req.user.role || 'user'
   });
 });
+
+// ---------------------------------------------------------------------------
+// ADMIN CONFIG API
+// ---------------------------------------------------------------------------
+
+// Register admin routes from separate module
+const registerAdminRoutes = require('./adminRoutes');
+registerAdminRoutes(app, { requireAdmin, CONFIG, setSetting });
 
 // ---------------------------------------------------------------------------
 // UPLOAD FILE  (with Sharp to strip image metadata)
@@ -966,7 +957,26 @@ app.get('/api/admin/stats', requireAdmin, (req, res) => {
               return res.status(500).json({ error: 'DB error' });
             }
             out.openReports = row5.openReports;
-            res.json(out);
+            // admin count
+            db.get("SELECT COUNT(*) AS adminCount FROM users WHERE role = 'admin'", [], (err6, row6) => {
+              if (err6) {
+                console.error('Admin stats adminCount error:', err6);
+                return res.status(500).json({ error: 'DB error' });
+              }
+              out.adminCount = row6.adminCount || 0;
+
+              // online count: sessions with last_seen in the recent window (5 minutes)
+              const windowMs = 5 * 60 * 1000;
+              const cutoff = Date.now() - windowMs;
+              db.get('SELECT COUNT(*) AS onlineCount FROM sessions WHERE last_seen IS NOT NULL AND last_seen >= ?', [cutoff], (err7, row7) => {
+                if (err7) {
+                  console.error('Admin stats onlineCount error:', err7);
+                  return res.status(500).json({ error: 'DB error' });
+                }
+                out.onlineCount = row7 ? row7.onlineCount : 0;
+                res.json(out);
+              });
+            });
           });
         });
       });
@@ -1171,6 +1181,34 @@ app.delete('/api/admin/blocked-ips/:ip', requireAdmin, (req, res) => {
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+});
+
+// Heartbeat endpoint: called by clients to mark session as active
+app.post('/api/ping', (req, res) => {
+  const sid = req.cookies && req.cookies.session_id;
+  if (!sid || !req.user) return res.json({ ok: false });
+  try {
+    const LAST_SEEN_THRESHOLD = 30 * 1000; // 30s
+    db.get('SELECT last_seen FROM sessions WHERE id = ?', [sid], (err, row) => {
+      if (err) {
+        console.error('Ping select error:', err);
+        return res.json({ ok: false });
+      }
+      const now = Date.now();
+      const last = row && row.last_seen ? row.last_seen : null;
+      if (!last || (now - last) > LAST_SEEN_THRESHOLD) {
+        db.run('UPDATE sessions SET last_seen = ? WHERE id = ?', [now, sid], err2 => {
+          if (err2) console.error('Ping update error:', err2);
+          return res.json({ ok: true });
+        });
+      } else {
+        return res.json({ ok: true });
+      }
+    });
+  } catch (e) {
+    console.error('Ping handler failed', e);
+    res.json({ ok: false });
+  }
 });
 
 // ---------------------------------------------------------------------------

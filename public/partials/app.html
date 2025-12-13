@@ -1,0 +1,110 @@
+<div id="app">
+  <header>
+    <div class="brand">
+      <div class="brand-logo">P</div>
+      <div>
+        <div style="font-weight:600;font-size:1.2rem">Pastebin</div>
+        <div style="font-size:0.85rem;color:var(--text-muted)">Instant • Private • Forever</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button id="openDashboard" class="btn btn-success">My Shares</button>
+      <button id="openAdmin" class="btn btn-outline" style="display:none;">Admin</button>
+      <button class="btn btn-outline theme-toggle" data-theme-toggle>
+        <span class="theme-icon">Moon</span> <span class="theme-label">Dark</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="card" style="max-width:800px;margin:auto">
+      <h1 style="text-align:center;margin-bottom:2rem">Share anything in seconds</h1>
+
+      <!-- AUTH SECTION -->
+      <div id="authSection">
+        <div id="loggedOutView" class="auth-row">
+          <div class="auth-meta">
+            Create an account or log in. Your files and pastes will be tied to your account and only visible in your own dashboard.
+          </div>
+          <div class="auth-fields">
+            <input id="authEmail" type="email" placeholder="Email" autocomplete="email">
+            <input id="authPassword" type="password" placeholder="Password (min 6 chars)" autocomplete="current-password">
+            <button id="loginBtn" class="btn btn-success">Log in</button>
+            <button id="registerBtn" class="btn btn-outline">Register</button>
+          </div>
+          <div id="authStatus" class="auth-status"></div>
+        </div>
+
+        <div id="loggedInView" class="logged-in-row" style="display:none">
+          <div>
+            <div style="font-size:0.9rem;color:var(--text-muted)">Logged in as</div>
+            <div id="userLabel" style="font-size:0.95rem;font-weight:600"></div>
+          </div>
+          <button id="logoutBtn" class="btn btn-outline">Log out</button>
+        </div>
+      </div>
+
+      <!-- MAIN SHARE UI (hidden until logged in) -->
+      <div id="mainContent" style="display:none">
+        <div class="mode-toggle-row">
+          <button id="modeFilesBtn" class="btn active">Files</button>
+          <button id="modePasteBtn" class="btn btn-outline">Paste</button>
+        </div>
+
+        <div class="expiry-row">
+          <button class="expiry-btn" data-expiry="1h">1 hour</button>
+          <button class="expiry-btn active" data-expiry="1d">1 day</button>
+          <button class="expiry-btn" data-expiry="7d">7 days</button>
+          <button class="expiry-btn" data-expiry="30d">30 days</button>
+          <button class="expiry-btn" data-expiry="never">Never expires</button>
+        </div>
+
+        <div id="fileDropzone" style="border:2px dashed var(--border);padding:4rem;border-radius:1.4rem;text-align:center;cursor:pointer;transition:.2s">
+          <div style="font-size:2rem;margin-bottom:1rem">Drop files anywhere</div>
+          <div style="color:var(--text-muted);margin-bottom:2rem">or</div>
+          <button id="browseBtn" class="btn" style="font-size:1.1rem;padding:.9rem 2rem">Choose files</button>
+          <input id="fileInput" type="file" multiple style="display:none">
+        </div>
+
+        <div id="pasteContainer" style="display:none">
+          <textarea id="pasteInput" placeholder="Paste code, logs, text — it’s saved forever on this server…" style="width:100%;min-height:260px;padding:1.4rem;border-radius:1rem;border:1px solid var(--border);background:var(--bg-soft);color:var(--text-primary);font-family:ui-monospace,monospace;font-size:1.02rem"></textarea>
+          <div style="text-align:right;margin-top:1.2rem">
+            <button id="pasteSubmitBtn" class="btn" style="padding:.8rem 2rem;font-size:1.1rem">Share paste</button>
+          </div>
+        </div>
+
+        <div id="status" style="margin-top:2.5rem;text-align:center;font-size:1.2rem"></div>
+      </div>
+
+      <!-- Shown only when logged out -->
+      <div id="loggedOutHint" style="display:none;margin-top:2rem;text-align:center;color:var(--text-muted);font-size:0.95rem">
+        Log in above to upload files or create pastes.
+      </div>
+      <!-- Admin Panel (hidden until admin) -->
+      <div id="adminPanel" style="display:none;margin-top:1.5rem;border-top:1px dashed var(--border);padding-top:1rem">
+        <h3>Admin Settings</h3>
+        <div style="display:flex;flex-direction:column;gap:0.6rem;max-width:600px">
+          <label><input type="checkbox" id="cfg_email_verification"> Require email verification</label>
+          <label><input type="checkbox" id="cfg_enable_admin_reg"> Enable admin registration</label>
+          <label>Quota bytes: <input id="cfg_quota_bytes" type="number" style="width:200px"></label>
+          <fieldset style="border:1px solid var(--border);padding:0.6rem;border-radius:0.5rem">
+            <legend>Mail settings</legend>
+            <label>Host: <input id="cfg_mail_host" type="text" style="width:100%"></label>
+            <label>Port: <input id="cfg_mail_port" type="number" style="width:120px"></label>
+            <label><input type="checkbox" id="cfg_mail_secure"> Secure (SSL)</label>
+            <label>Auth user: <input id="cfg_mail_user" type="text" style="width:100%"></label>
+            <label>Auth pass: <input id="cfg_mail_pass" type="password" style="width:100%"></label>
+            <label><input type="checkbox" id="cfg_mail_show_pass"> Show password</label>
+            <label>From: <input id="cfg_mail_from" type="text" style="width:100%"></label>
+          </fieldset>
+          <div style="display:flex;gap:0.6rem">
+            <button id="cfg_save" class="btn btn-success btn-sm">Save</button>
+            <button id="cfg_test_smtp" class="btn btn-sm">Test SMTP</button>
+            <button id="cfg_reload" class="btn btn-outline btn-sm">Reload</button>
+            <div id="cfg_status" style="align-self:center;color:var(--text-muted)"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

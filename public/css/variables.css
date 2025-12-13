@@ -1,0 +1,17 @@
+/* Variables (default / dark theme) */
+:root {
+  --bg: #020617;
+  --bg-elevated: #0f172a;
+  --bg-soft: #1e293b;
+  --border: #334155;
+  --accent: #38bdf8;
+  --accent-soft: rgba(56,189,248,0.15);
+  --success: #22c55e;
+  --danger: #f97373;
+  --text-primary: #f1f5f9;
+  --text-muted: #94a3b8;
+  --text-soft: #64748b;
+  --shadow: 0 20px 40px rgba(0,0,0,0.5);
+  --radius-lg: 1.1rem;
+  --radius-pill: 999px;
+}

@@ -1,0 +1,15 @@
+## Local dev / runtime artifacts
+node_modules/
+uploads/
+pastebin.db
+*.db-wal
+*.db-shm
+server.pid
+server.log
+.env
+.env.local
+*.tmp
+
+## OS
+.DS_Store
+thumbs.db
