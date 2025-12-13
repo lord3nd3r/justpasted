@@ -177,6 +177,7 @@ function renderDashboard() {
         <table>
           <thead>
             <tr>
+              <th></th>
               <th>Title</th>
               <th>Type</th>
               <th>Views</th>
@@ -204,9 +205,18 @@ function renderDashboard() {
               const displayTitle = type === 'file'
                 ? truncateFileTitle(rawTitle)
                 : rawTitle;
+              // Thumbnail HTML (only for image files)
+              let thumbHtml = '';
+              try {
+                if (type === 'file' && s.mime && s.mime.indexOf('image/') === 0 && s.filename) {
+                  const url = `/uploads/${encodeURIComponent(s.filename)}`;
+                  thumbHtml = `<div class="thumb"><img src="${url}" alt="thumb" loading="lazy"></div>`;
+                }
+              } catch (e) { thumbHtml = ''; }
 
               return `
                 <tr data-id="${escapeHtml(s.id)}" data-type="${type}">
+                  <td style="width:56px">${thumbHtml}</td>
                   <td>
                     <a href="${href}" target="_blank" rel="noopener">
                       ${escapeHtml(displayTitle)}

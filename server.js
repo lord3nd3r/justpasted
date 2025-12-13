@@ -732,8 +732,8 @@ app.get('/api/shares', requireAuth, (req, res) => {
   const now = Date.now();
 
   db.all(
-    "SELECT id, original_name AS title, 'file' AS type, created, size, views, expires FROM files WHERE user_id = ? AND (expires IS NULL OR expires > ?)",
-    [req.user.id, now],
+  "SELECT id, filename, mime, original_name AS title, 'file' AS type, created, size, views, expires FROM files WHERE user_id = ? AND (expires IS NULL OR expires > ?)",
+  [req.user.id, now],
     (err, files) => {
       if (err) {
         console.error('Files list error:', err);
