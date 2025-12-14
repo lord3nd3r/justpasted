@@ -512,6 +512,21 @@ function initApp() {
           authStatusEl.className = 'auth-status error';
           return;
         }
+        // If server sent a verification email, inform the user instead of logging them in
+        if (typeof data.verificationSent !== 'undefined') {
+          if (data.verificationSent) {
+            authStatusEl.textContent = 'Account created — check your email for a verification link.';
+            authStatusEl.className = 'auth-status ok';
+          } else {
+            authStatusEl.textContent = 'Account created — verification email could not be sent. Contact the admin.';
+            authStatusEl.className = 'auth-status error';
+          }
+          passwordInput.value = '';
+          passwordInput.blur();
+          return;
+        }
+
+        // Fallback: server created a session and logged the user in
         authStatusEl.textContent = 'Account created & logged in!';
         authStatusEl.className = 'auth-status ok';
         fetch('/api/me')
