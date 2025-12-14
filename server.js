@@ -231,6 +231,7 @@ app.use((req, res, next) => {
 function requireAuth(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
   if (req.user.is_banned) return res.status(403).json({ error: 'Account banned' });
+  if (CONFIG.EMAIL_VERIFICATION_ENABLED && !req.user.email_verified) return res.status(403).json({ error: 'Email address not verified' });
   next();
 }
 
