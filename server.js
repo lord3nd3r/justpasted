@@ -639,6 +639,40 @@ app.get('/f/:id', (req, res) => {
       // Prefer served resized variant for viewing if available
       const viewerSrc = file.resized_filename ? `/uploads/${encodeURIComponent(file.resized_filename)}` : fileUrl;
 
+      // Prepare viewer HTML based on MIME
+      let viewerHtml = '';
+      try {
+        if (mime && mime.startsWith('image/')) {
+          viewerHtml = `<div style="display:flex;flex-direction:column;align-items:center;gap:0.6rem;">
+                <img id="viewerImg" src="${viewerSrc}" alt="${title}">
+                <div>
+                  <a href="${fileUrl}" class="download-link" download>Download</a>
+                  <button class="button" id="toggleFullBtn">Full size</button>
+                </div>
+             </div>`;
+        } else if (mime && mime.startsWith('audio/')) {
+          viewerHtml = `<div style="display:flex;flex-direction:column;align-items:center;gap:0.6rem;">
+                  <audio controls style="max-width:100%;width:100%;">
+                    <source src="${fileUrl}" type="${mime}">
+                    Your browser does not support the audio element.
+                  </audio>
+                  <div><a href="${fileUrl}" class="download-link" download>Download</a></div>
+               </div>`;
+        } else if (mime && mime.startsWith('video/')) {
+          viewerHtml = `<div style="display:flex;flex-direction:column;align-items:center;gap:0.6rem;">
+                    <video controls style="max-width:100%;height:auto;">
+                      <source src="${fileUrl}" type="${mime}">
+                      Your browser does not support the video element.
+                    </video>
+                    <div><a href="${fileUrl}" class="download-link" download>Download</a></div>
+                 </div>`;
+        } else {
+          viewerHtml = `<iframe src="${fileUrl}" style="width:100%;height:80vh;border:none;background:#020617;"></iframe>`;
+        }
+      } catch (e) {
+        viewerHtml = `<iframe src="${fileUrl}" style="width:100%;height:80vh;border:none;background:#020617;"></iframe>`;
+      }
+
       // Simple frame chrome with header/footer and main viewer
       res.send(`<!DOCTYPE html>
 <html data-theme="dark">
@@ -673,18 +707,7 @@ app.get('/f/:id', (req, res) => {
   </header>
   <div class="main">
     <div class="frame">
-      {
-        ['.png','.jpg','.jpeg','.gif','.webp','.bmp','.svg','.avif']
-          .includes(path.extname(file.filename).toLowerCase())
-          ? (`<div style="display:flex;flex-direction:column;align-items:center;gap:0.6rem;">
-                <img id="viewerImg" src="${viewerSrc}" alt="${title}">
-                <div>
-                  <a href="${fileUrl}" class="download-link" download>Download</a>
-                  <button class="button" id="toggleFullBtn">Full size</button>
-                </div>
-             </div>`)
-          : `<iframe src="${fileUrl}" style="width:100%;height:80vh;border:none;background:#020617;"></iframe>`
-      }
+      ${viewerHtml}
     </div>
   </div>
   <footer>
